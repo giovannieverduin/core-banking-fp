@@ -1,5 +1,6 @@
 import type { AccountId } from '../domain/account-id.js';
-import type { AccountEvent, EventPayload } from './types.js';
+import type { EventPayload } from './types.js';
+import type { StoredEvent } from '../reconciliation/hash-chain.js';
 
 export interface AppendCandidate {
   readonly aggregateId: AccountId;
@@ -28,8 +29,8 @@ export class EventStoreError extends Error {
 }
 
 export interface EventStore {
-  append(candidates: readonly AppendCandidate[]): Promise<readonly AccountEvent[]>;
-  readStream(aggregateId: AccountId): Promise<readonly AccountEvent[]>;
-  readAll(): Promise<readonly AccountEvent[]>;
+  append(candidates: readonly AppendCandidate[]): Promise<readonly StoredEvent[]>;
+  readStream(aggregateId: AccountId): Promise<readonly StoredEvent[]>;
+  readAll(): Promise<readonly StoredEvent[]>;
   currentVersion(aggregateId: AccountId): Promise<number>;
 }

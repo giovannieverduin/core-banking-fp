@@ -8,16 +8,23 @@ import {
   type EventStore,
 } from './event-store.js';
 import type { AccountEvent, EventPayload } from './types.js';
+import {
+  GENESIS_HASH,
+  computeEventHash,
+  type StoredEvent,
+} from '../reconciliation/hash-chain.js';
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS events (
-  event_id     TEXT PRIMARY KEY,
-  aggregate_id TEXT NOT NULL,
-  version      INTEGER NOT NULL,
-  occurred_at  TEXT NOT NULL,
-  event_type   TEXT NOT NULL,
-  payload      TEXT NOT NULL,
-  global_seq   INTEGER NOT NULL,
+  event_id      TEXT PRIMARY KEY,
+  aggregate_id  TEXT NOT NULL,
+  version       INTEGER NOT NULL,
+  occurred_at   TEXT NOT NULL,
+  event_type    TEXT NOT NULL,
+  payload       TEXT NOT NULL,
+  global_seq    INTEGER NOT NULL,
+  previous_hash TEXT NOT NULL,
+  hash          TEXT NOT NULL UNIQUE,
   UNIQUE(aggregate_id, version)
 );
 CREATE INDEX IF NOT EXISTS idx_events_aggregate ON events(aggregate_id, version);
@@ -31,6 +38,8 @@ interface EventRow {
   occurred_at: string;
   event_type: string;
   payload: string;
+  previous_hash: string;
+  hash: string;
 }
 
 function toEventRow(value: Record<string, SqlValue>): EventRow {
@@ -41,10 +50,12 @@ function toEventRow(value: Record<string, SqlValue>): EventRow {
     occurred_at: String(value['occurred_at']),
     event_type: String(value['event_type']),
     payload: String(value['payload']),
+    previous_hash: String(value['previous_hash']),
+    hash: String(value['hash']),
   };
 }
 
-function rowToEvent(row: EventRow): AccountEvent {
+function rowToEvent(row: EventRow): StoredEvent {
   const payload = JSON.parse(row.payload) as EventPayload;
   return {
     metadata: {
@@ -54,6 +65,10 @@ function rowToEvent(row: EventRow): AccountEvent {
       occurredAt: row.occurred_at,
     },
     payload,
+    chain: {
+      hash: row.hash,
+      previousHash: row.previous_hash,
+    },
   };
 }
 
@@ -69,13 +84,14 @@ export class SqliteEventStore implements EventStore {
 
   async append(
     candidates: readonly AppendCandidate[],
-  ): Promise<readonly AccountEvent[]> {
+  ): Promise<readonly StoredEvent[]> {
     if (candidates.length === 0) return [];
 
     this.db.run('BEGIN');
     try {
       const versionCursor = new Map<AccountId, number>();
-      const written: AccountEvent[] = [];
+      const written: StoredEvent[] = [];
+      let previousHash = this.latestHashSync();
       for (const candidate of candidates) {
         const aggregateId = candidate.aggregateId;
         let actual = versionCursor.get(aggregateId);
@@ -90,7 +106,7 @@ export class SqliteEventStore implements EventStore {
           }
         }
         const nextVersion = actual + 1;
-        const event: AccountEvent = {
+        const base: AccountEvent = {
           metadata: {
             eventId: randomUUID(),
             aggregateId,
@@ -99,9 +115,15 @@ export class SqliteEventStore implements EventStore {
           },
           payload: candidate.payload,
         };
-        this.insert(event);
-        written.push(event);
+        const hash = computeEventHash(base, previousHash);
+        const stored: StoredEvent = {
+          ...base,
+          chain: { hash, previousHash },
+        };
+        this.insert(stored);
+        written.push(stored);
         versionCursor.set(aggregateId, nextVersion);
+        previousHash = hash;
       }
       this.db.run('COMMIT');
       return written;
@@ -111,13 +133,13 @@ export class SqliteEventStore implements EventStore {
     }
   }
 
-  async readStream(aggregateId: AccountId): Promise<readonly AccountEvent[]> {
+  async readStream(aggregateId: AccountId): Promise<readonly StoredEvent[]> {
     const stmt = this.db.prepare(
-      'SELECT event_id, aggregate_id, version, occurred_at, event_type, payload FROM events WHERE aggregate_id = ? ORDER BY version ASC',
+      'SELECT event_id, aggregate_id, version, occurred_at, event_type, payload, previous_hash, hash FROM events WHERE aggregate_id = ? ORDER BY version ASC',
     );
     try {
       stmt.bind([aggregateId]);
-      const events: AccountEvent[] = [];
+      const events: StoredEvent[] = [];
       while (stmt.step()) {
         events.push(rowToEvent(toEventRow(stmt.getAsObject())));
       }
@@ -127,12 +149,12 @@ export class SqliteEventStore implements EventStore {
     }
   }
 
-  async readAll(): Promise<readonly AccountEvent[]> {
+  async readAll(): Promise<readonly StoredEvent[]> {
     const stmt = this.db.prepare(
-      'SELECT event_id, aggregate_id, version, occurred_at, event_type, payload FROM events ORDER BY global_seq ASC',
+      'SELECT event_id, aggregate_id, version, occurred_at, event_type, payload, previous_hash, hash FROM events ORDER BY global_seq ASC',
     );
     try {
-      const events: AccountEvent[] = [];
+      const events: StoredEvent[] = [];
       while (stmt.step()) {
         events.push(rowToEvent(toEventRow(stmt.getAsObject())));
       }
@@ -165,12 +187,12 @@ export class SqliteEventStore implements EventStore {
     }
   }
 
-  private insert(event: AccountEvent): void {
+  private insert(event: StoredEvent): void {
     const nextSeq = this.nextGlobalSeq();
     const stmt = this.db.prepare(
       `INSERT INTO events
-        (event_id, aggregate_id, version, occurred_at, event_type, payload, global_seq)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        (event_id, aggregate_id, version, occurred_at, event_type, payload, global_seq, previous_hash, hash)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     try {
       stmt.run([
@@ -181,11 +203,27 @@ export class SqliteEventStore implements EventStore {
         event.payload.type,
         JSON.stringify(event.payload),
         nextSeq,
+        event.chain.previousHash,
+        event.chain.hash,
       ]);
     } catch (err) {
       throw new EventStoreError(
         `Failed to insert event ${event.metadata.eventId}: ${(err as Error).message}`,
       );
+    } finally {
+      stmt.free();
+    }
+  }
+
+  private latestHashSync(): string {
+    const stmt = this.db.prepare(
+      'SELECT hash FROM events ORDER BY global_seq DESC LIMIT 1',
+    );
+    try {
+      if (!stmt.step()) return GENESIS_HASH;
+      const row = stmt.getAsObject();
+      const h = row['hash'];
+      return typeof h === 'string' && h.length > 0 ? h : GENESIS_HASH;
     } finally {
       stmt.free();
     }

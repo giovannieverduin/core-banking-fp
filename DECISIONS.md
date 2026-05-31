@@ -208,3 +208,35 @@
 **Options:** Group candidates by aggregate before insert / Preserve the candidate array's order across aggregates
 **Decision:** Preserve the candidate array's order across aggregates. Per-aggregate version cursor tracks in-batch increments.
 **Rationale:** The transfer saga writes `[Initiated(source), Received(destination), Completed(source)]`. The grouping approach would insert in `[Initiated, Completed, Received]` order in the global sequence, which is wrong for downstream subscribers that expect `Received` to precede `Completed`. Preserving array order makes the API contract obvious: the caller controls the global sequence by ordering their candidates correctly. Per-aggregate version monotonicity is still enforced via the cursor.
+
+---
+
+## DECISION 26 - SHA-256 Hash Chain with Canonical JSON
+
+**Options:** No tamper detection / Per-aggregate Merkle chain / Global SHA-256 chain over canonicalized event content
+**Decision:** Global SHA-256 chain. Each event stores `(previousHash, hash)`. Hash inputs: `eventId | aggregateId | version | occurredAt | type | canonicalize(payload) | previousHash`. Canonicalization sorts object keys alphabetically.
+**Rationale:** Global chain detects insertions, deletions, and reorderings anywhere in the log - a per-aggregate chain misses cross-aggregate manipulation. SHA-256 is the boring, well-vetted default; nothing about banking warrants experimenting with newer hash functions. Canonicalization is necessary because JS object property order is technically implementation-defined - without it, the same logical payload could hash differently after a round trip through JSON.parse. The genesis hash is 64 zeros (`0x00...00`), which is a fixed, unambiguous anchor.
+
+---
+
+## DECISION 27 - StoredEvent Extension via Subtype
+
+**Options:** Mutate AccountEvent to include chain fields / Optional chain fields on AccountEvent / StoredEvent subtype extending AccountEvent
+**Decision:** Define `StoredEvent extends AccountEvent` with a required `chain` field. The EventStore returns `StoredEvent` from all reads; Layers 1-3 keep working because the subtype is structurally compatible.
+**Rationale:** Mutating AccountEvent would force every test fixture in Layers 1-3 to add chain metadata, even though they do not care about it. Optional fields create a "sometimes-undefined" trap where consumers forget the check and only discover it in production. A subtype is type-safe (every read returns chain metadata) and zero-ceremony for callers that ignore it. The chain stays out of the AccountEvent type so domain code can construct events without simulating storage.
+
+---
+
+## DECISION 28 - Structured Error List, Not First-Failure Throw
+
+**Options:** Throw on first integrity violation / Return a structured report listing every violation
+**Decision:** `verifyChainOnEvents` returns `IntegrityReport { ok, eventsChecked, errors: IntegrityError[] }` and never throws.
+**Rationale:** When a chain has been tampered with, the first error rarely tells the whole story - an attacker who edits one event invalidates downstream hashes too, and an operator needs to see the full damage surface to assess scope. Throwing forces a halt; returning a structured report lets the operator render a dashboard, count by error type, and decide on remediation. The same principle applies to `reconcile()` - it returns findings instead of throwing, so a monitoring loop can poll it cheaply and alert on `ok === false`.
+
+---
+
+## DECISION 29 - Reconcile Combines Three Independent Checks
+
+**Options:** Single monolithic verifier / Three independent checks composed in `reconcile()` / Three separate top-level functions
+**Decision:** Three checks (integrity, trial balance, cross-projection agreement) implemented independently and composed in `reconcile()`. Each is exposed in isolation as well.
+**Rationale:** The three checks answer different questions: integrity asks "was the log tampered with?"; trial balance asks "do the books balance?"; cross-projection agreement asks "do our two views of the same data agree?". A monolithic verifier hides the diagnostic signal - you would know something is wrong, not what. Composing them lets the same primitive answer "is everything fine?" (just call `reconcile()`) and "where exactly did we break?" (inspect each finding type). When the API or dashboard layers want to surface specific subsets, they can call the primitives directly.
