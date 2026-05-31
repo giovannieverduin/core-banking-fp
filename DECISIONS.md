@@ -240,3 +240,35 @@
 **Options:** Single monolithic verifier / Three independent checks composed in `reconcile()` / Three separate top-level functions
 **Decision:** Three checks (integrity, trial balance, cross-projection agreement) implemented independently and composed in `reconcile()`. Each is exposed in isolation as well.
 **Rationale:** The three checks answer different questions: integrity asks "was the log tampered with?"; trial balance asks "do the books balance?"; cross-projection agreement asks "do our two views of the same data agree?". A monolithic verifier hides the diagnostic signal - you would know something is wrong, not what. Composing them lets the same primitive answer "is everything fine?" (just call `reconcile()`) and "where exactly did we break?" (inspect each finding type). When the API or dashboard layers want to surface specific subsets, they can call the primitives directly.
+
+---
+
+## DECISION 30 - SHA-256 Hash for API Keys, Not Bcrypt
+
+**Options:** Plaintext storage / SHA-256 hash / Bcrypt / Argon2
+**Decision:** SHA-256 hash of the API key, stored in an in-memory map. Constant-time comparison via `timingSafeEqual` for admin key check.
+**Rationale:** API keys here are 256 bits of cryptographic randomness (`randomBytes(32).toString('hex')`) - they are not user-chosen passwords. Bcrypt and Argon2 exist to slow down brute-force attacks against weak passwords. There is no brute-force surface on 256-bit random keys, so the cost function adds latency without adding security. SHA-256 is fast, lookup-by-hash is O(1), and we still cannot recover the plaintext key from storage if the in-memory map is dumped. For production we will move from in-memory map to a KMS-backed store - the hash scheme stays the same.
+
+---
+
+## DECISION 31 - Zod at the Boundary, Not via Fastify Schema Integration
+
+**Options:** Fastify's built-in JSON Schema validation / `fastify-type-provider-zod` plugin / Hand-call `Zod.parse()` inside each handler
+**Decision:** Hand-call `Schema.parse()` at the top of each handler.
+**Rationale:** Fastify's built-in validation uses JSON Schema, which means duplicating every Zod schema. The Zod type-provider plugin is one more dependency that we would have to upgrade every Fastify-major. Calling `parse()` directly is three lines per handler, gives the same compile-time inference (`z.infer`), throws `ZodError` which our error mapper already handles, and survives a Fastify major-version bump unchanged. The validation step is explicit in the handler body, so a reader can see exactly where the boundary is.
+
+---
+
+## DECISION 32 - Transfer Auth Pinned to Source Account
+
+**Options:** Either account's key authorizes / Source account key required / Source key required AND destination must consent
+**Decision:** Source account key required. Destination account does not need to opt in.
+**Rationale:** Banking convention is that the payer authorizes the payment; the payee accepts inbound funds unconditionally. Requiring destination consent would block legitimate use cases (refunds, payouts, regulator-mandated reversals) and have no security benefit - if an attacker controls the source key, they can already drain the account by withdrawing to themselves. Either-key auth would let a destination account holder pull funds from the source without authorization, which is exactly the wrong primitive. The constraint lives in one place: `auth.accountId !== body.fromAccountId → 403`.
+
+---
+
+## DECISION 33 - HTTP Status Codes: 201 vs 422 for Transfer Rejection
+
+**Options:** Treat domain rejection as 200 with `status: rejected` / 400 (bad request) / 422 (unprocessable entity)
+**Decision:** Successful transfer returns 201. Domain-level rejection (insufficient funds, currency mismatch, same-account) returns 422 with the same response shape. 400 is reserved for schema/validation failures.
+**Rationale:** Distinguishing schema errors (400) from business-rule failures (422) gives API clients a clean retry signal: 400 means "fix your request and try again," 422 means "the request was valid but the system refused to execute it." Returning 200 for rejection would force clients to always inspect the body to know success; HTTP status codes exist to short-circuit that. 201 for the success case follows the REST convention that a transfer creates a new resource (the transfer record). Rejected-but-recorded transfers are still resources in the audit sense, but 422 communicates "did not create the intended effect" more clearly.
