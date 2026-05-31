@@ -3,6 +3,10 @@ import type { Currency } from './currency.js';
 import { Money } from './money.js';
 import type { EventStore } from '../events/event-store.js';
 import { replayAccount } from './account.js';
+import {
+  HardRejectPolicy,
+  type OverdraftPolicy,
+} from '../ledger/overdraft-policy.js';
 import type {
   AccountCreatedPayload,
   MoneyDepositedPayload,
@@ -81,6 +85,7 @@ export interface WithdrawInput {
   readonly accountId: AccountId;
   readonly amount: Money;
   readonly reference: string;
+  readonly overdraftPolicy?: OverdraftPolicy;
 }
 
 export async function withdrawMoney(
@@ -93,15 +98,10 @@ export async function withdrawMoney(
   const events = await store.readStream(input.accountId);
   const state = replayAccount(events);
   if (!state) throw new CommandError(`Unknown account: ${input.accountId}`);
-  if (state.currency !== input.amount.currency) {
-    throw new CommandError(
-      `Withdrawal currency ${input.amount.currency} does not match account currency ${state.currency}`,
-    );
-  }
-  if (state.balance.lt(input.amount)) {
-    throw new CommandError(
-      `Insufficient funds: balance ${state.balance.toString()} < withdrawal ${input.amount.toString()}`,
-    );
+  const policy = input.overdraftPolicy ?? HardRejectPolicy;
+  const decision = policy.authorize(state, input.amount);
+  if (!decision.ok) {
+    throw new CommandError(`Withdrawal rejected by ${policy.name}: ${decision.reason}`);
   }
   const payload: MoneyWithdrawnPayload = {
     type: 'MoneyWithdrawn',

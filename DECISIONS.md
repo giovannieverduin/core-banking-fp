@@ -120,3 +120,51 @@
 **Options:** Last-write-wins / Optimistic with `expectedVersion` / Pessimistic locking
 **Decision:** Optimistic: the caller passes `expectedVersion`; the store throws `ConcurrencyError` if the aggregate has moved on.
 **Rationale:** Append-only logs cannot tolerate last-write-wins - it would let two concurrent writers both apply a withdrawal against the same balance. Pessimistic locking is overkill for sql.js (single-process) and would not generalize cleanly to Postgres. Optimistic concurrency forces the caller to re-read and retry, which is exactly the contract the domain wants.
+
+---
+
+## DECISION 15 - Posting Rules as a Pure Projection
+
+**Options:** Events carry debit/credit pairs / Events are business-level, posting rules derive entries
+**Decision:** Events stay business-level (`MoneyDeposited`, `TransferInitiated`, etc.). A separate, pure `eventToJournal` function applies posting rules to derive a balanced journal of ledger entries.
+**Rationale:** Business events describe *intent*, not bookkeeping mechanics. Coupling Dr/Cr pairs into the event payload would leak accounting concerns into the domain - and every new account type (loan, credit, escrow) would need a new event shape. Keeping posting rules as a pure projection means we can evolve the chart of accounts without touching the log, and the rules themselves are trivially testable in isolation. The function asserts the journal is balanced before returning - if a rule ever produced a lopsided journal, it would throw immediately rather than silently corrupting the books.
+
+---
+
+## DECISION 16 - System Accounts for Double-Entry Counterparties
+
+**Options:** Single-sided customer entries / Synthetic system accounts (cash-in, cash-out, suspense) / Real GL accounts created via events
+**Decision:** Synthetic, per-currency system accounts (`cash-in:USD`, `cash-out:USD`, `suspense:USD`) referenced by tagged-union `LedgerAccountRef`. They have no `AccountCreated` event.
+**Rationale:** Double-entry needs a counterparty for every customer-side entry. Modelling them as real customer accounts would require special-case event flows and pollute the customer aggregate. Modelling them as bookkeeping-only entities via the ledger projection keeps the customer aggregate clean and makes the chart of accounts trivially extensible (e.g. add a `fee-revenue:USD` system account later by editing one file). Per-currency split is mandatory because cross-currency `Money` arithmetic throws - mixing them in one bucket would be a bug.
+
+---
+
+## DECISION 17 - Normal-Side Balance Convention
+
+**Options:** Always `debit - credit` signed / Per-account normal side / Treat all balances as positive Money with separate sign field
+**Decision:** Each ledger account has a `NormalSide` (debit for assets like cash-in, credit for liabilities like customer accounts). Balance is computed as `(normal-side total) - (opposite-side total)`.
+**Rationale:** This is how real accounting systems work. A customer's account is a liability from the bank's perspective, so credits increase the balance and debits decrease it. Hard-coding `debit - credit` everywhere would make customer balances negative-of-intuitive and break overdraft logic. The per-account normal side is two lines of config per account type and makes future account kinds (assets, equity, revenue, expense) drop in cleanly.
+
+---
+
+## DECISION 18 - Trial Balance Per Currency
+
+**Options:** Single global trial balance / Per-currency trial balance / Convert to a base currency
+**Decision:** Per-currency trial balance. Books must balance independently in each currency.
+**Rationale:** Cross-currency netting is an FX operation that requires a rate and produces a P&L entry. Until we have an FX module, mixing currencies in the trial balance would either require silent conversion (banned by the money-safety rules) or accept a "balanced" book that is in fact off by an unrecognised FX exposure. Per-currency is the only safe default - the FX module will later add a currency-translation journal whose own entries also balance per-currency.
+
+---
+
+## DECISION 19 - Overdraft as an Authorize Decision
+
+**Options:** Boolean predicate / Throw inside policy / Return discriminated decision
+**Decision:** `OverdraftPolicy.authorize(account, amount)` returns `{ ok: true } | { ok: false; reason }`. Commands map a non-ok decision to `CommandError`.
+**Rationale:** A boolean loses the rejection reason, which the API layer needs to render error responses and compliance needs for audit. Throwing inside the policy couples control flow to exceptions and makes composition (policy A and policy B) awkward. A discriminated result is composable, type-safe, and gives the caller full context. `HardRejectPolicy` is the default to preserve Layer-1 behavior; alternative policies are opt-in via the command input.
+
+---
+
+## DECISION 20 - Ledger Projection is Disposable
+
+**Options:** Persist the ledger as authoritative state / Project from events on demand / Snapshot the projection periodically
+**Decision:** Project from events on demand. No persisted ledger state in MVP.
+**Rationale:** The event log is the source of truth (Decision from CLAUDE.md). The ledger is a view. Persisting it would create a second source of truth that can drift, and the only safe way to recover from drift would be to rebuild from the log anyway. Snapshots are a performance optimisation, not a correctness mechanism - they go in the parking lot until measurement proves they are needed.
