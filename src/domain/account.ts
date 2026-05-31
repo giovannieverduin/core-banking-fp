@@ -84,12 +84,18 @@ function applyEvent(
       assertCurrency(event.payload.currency, currency);
       return balance.subtract(Money.of(event.payload.amount, currency));
     }
+    case 'TransferReceived': {
+      assertCurrency(event.payload.currency, currency);
+      return balance.add(Money.of(event.payload.amount, currency));
+    }
     case 'TransferCompleted':
       return balance;
     case 'TransferFailed': {
       assertCurrency(event.payload.currency, currency);
       return balance.add(Money.of(event.payload.amount, currency));
     }
+    case 'TransferRejected':
+      return balance;
   }
 }
 

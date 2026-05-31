@@ -72,38 +72,36 @@ export class SqliteEventStore implements EventStore {
   ): Promise<readonly AccountEvent[]> {
     if (candidates.length === 0) return [];
 
-    const grouped = new Map<AccountId, AppendCandidate[]>();
-    for (const c of candidates) {
-      const list = grouped.get(c.aggregateId) ?? [];
-      list.push(c);
-      grouped.set(c.aggregateId, list);
-    }
-
     this.db.run('BEGIN');
     try {
+      const versionCursor = new Map<AccountId, number>();
       const written: AccountEvent[] = [];
-      for (const [aggregateId, group] of grouped) {
-        const actual = this.currentVersionSync(aggregateId);
-        const first = group[0];
-        if (!first) continue;
-        if (first.expectedVersion !== actual) {
-          throw new ConcurrencyError(aggregateId, first.expectedVersion, actual);
-        }
-        let version = actual;
-        for (const candidate of group) {
-          version += 1;
-          const event: AccountEvent = {
-            metadata: {
-              eventId: randomUUID(),
+      for (const candidate of candidates) {
+        const aggregateId = candidate.aggregateId;
+        let actual = versionCursor.get(aggregateId);
+        if (actual === undefined) {
+          actual = this.currentVersionSync(aggregateId);
+          if (candidate.expectedVersion !== actual) {
+            throw new ConcurrencyError(
               aggregateId,
-              version,
-              occurredAt: new Date().toISOString(),
-            },
-            payload: candidate.payload,
-          };
-          this.insert(event);
-          written.push(event);
+              candidate.expectedVersion,
+              actual,
+            );
+          }
         }
+        const nextVersion = actual + 1;
+        const event: AccountEvent = {
+          metadata: {
+            eventId: randomUUID(),
+            aggregateId,
+            version: nextVersion,
+            occurredAt: new Date().toISOString(),
+          },
+          payload: candidate.payload,
+        };
+        this.insert(event);
+        written.push(event);
+        versionCursor.set(aggregateId, nextVersion);
       }
       this.db.run('COMMIT');
       return written;

@@ -43,6 +43,15 @@ export interface TransferInitiatedPayload {
   readonly currency: Currency;
 }
 
+export interface TransferReceivedPayload {
+  readonly type: 'TransferReceived';
+  readonly accountId: AccountId;
+  readonly transferId: TransferId;
+  readonly counterpartyAccountId: AccountId;
+  readonly amount: string;
+  readonly currency: Currency;
+}
+
 export interface TransferCompletedPayload {
   readonly type: 'TransferCompleted';
   readonly accountId: AccountId;
@@ -62,13 +71,25 @@ export interface TransferFailedPayload {
   readonly reason: string;
 }
 
+export interface TransferRejectedPayload {
+  readonly type: 'TransferRejected';
+  readonly accountId: AccountId;
+  readonly transferId: TransferId;
+  readonly counterpartyAccountId: AccountId;
+  readonly amount: string;
+  readonly currency: Currency;
+  readonly reason: string;
+}
+
 export type EventPayload =
   | AccountCreatedPayload
   | MoneyDepositedPayload
   | MoneyWithdrawnPayload
   | TransferInitiatedPayload
+  | TransferReceivedPayload
   | TransferCompletedPayload
-  | TransferFailedPayload;
+  | TransferFailedPayload
+  | TransferRejectedPayload;
 
 export type EventType = EventPayload['type'];
 

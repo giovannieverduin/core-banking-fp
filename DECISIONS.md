@@ -168,3 +168,43 @@
 **Options:** Persist the ledger as authoritative state / Project from events on demand / Snapshot the projection periodically
 **Decision:** Project from events on demand. No persisted ledger state in MVP.
 **Rationale:** The event log is the source of truth (Decision from CLAUDE.md). The ledger is a view. Persisting it would create a second source of truth that can drift, and the only safe way to recover from drift would be to rebuild from the log anyway. Snapshots are a performance optimisation, not a correctness mechanism - they go in the parking lot until measurement proves they are needed.
+
+---
+
+## DECISION 21 - Two-Sided Transfer Events
+
+**Options:** All transfer events on the source aggregate / Mirror events on both aggregates / Single global "Transfer" aggregate
+**Decision:** Source emits `TransferInitiated` + `TransferCompleted`. Destination emits its own `TransferReceived`. Failures use `TransferRejected` (pre-debit) or `TransferFailed` (post-debit compensation).
+**Rationale:** With single-sided events, the destination's per-aggregate `replayAccount` could not see incoming money - its balance would silently lag the ledger, breaking the invariant that the event log fully describes an aggregate's state. The fix is symmetry: each aggregate's stream is authoritative for that aggregate. The cross-aggregate atomicity is the EventStore's responsibility, not the aggregate's. This also makes per-aggregate snapshots and reconciliation easy later - no projection needs to read another aggregate's stream to know its balance.
+
+---
+
+## DECISION 22 - Atomic Multi-Aggregate Write vs Async Saga
+
+**Options:** Asynchronous saga with compensating events / Synchronous atomic multi-aggregate append / Two-phase commit
+**Decision:** Synchronous atomic append across both aggregates in one EventStore transaction.
+**Rationale:** sql.js runs in-process and supports a single BEGIN/COMMIT spanning any number of inserts, so we get true atomicity for free. An async saga would invent a problem we do not have - in-flight states, timeout handling, compensation orchestration - all to solve a distributed-systems problem that does not exist yet. The interface still records `TransferInitiated` and `TransferCompleted` as separate events, so a future Postgres+queue implementation can split the commit and resurrect the saga without changing the event shapes or consumer code. `TransferFailed` stays in the model as the compensation event for that future world.
+
+---
+
+## DECISION 23 - Idempotency via Stream Scan
+
+**Options:** Separate idempotency-key table / Scan source stream for prior `transferId` / Hash-based dedup at API boundary
+**Decision:** Scan the source aggregate's event stream for any event with the same `transferId`. If a terminal event (`Completed`, `Rejected`, `Failed`) is present, return its outcome marked `idempotent: true` without writing.
+**Rationale:** The event log is already the source of truth - a separate dedup table would be a second source that can drift. The scan is O(n) per call which is fine at MVP scale, and the same query gives us the saga-state info we need (no special "claimed" state to manage). Future optimisation: a `transferId` index column on the events table, or a projection of `transferId → outcome`. The interface is unchanged either way.
+
+---
+
+## DECISION 24 - TransferRejected vs TransferFailed
+
+**Options:** Single failure event with a `phase` discriminator / Two distinct events for pre-debit vs post-debit failure
+**Decision:** `TransferRejected` for pre-debit failures (validation, overdraft); `TransferFailed` for post-debit compensation.
+**Rationale:** The two cases have different balance semantics and the type system should reflect that. `TransferRejected` produces no ledger entries - the transfer never moved money and the rejection is purely an audit/idempotency marker. `TransferFailed` produces a compensating journal that credits the source back and debits suspense - it means a transfer did move money and is now being reversed. Collapsing them under one event with a `phase` field would force every consumer to branch on that field and risk applying the wrong posting rule. Distinct types make the posting rules exhaustive and let TypeScript's switch-narrowing catch missed cases.
+
+---
+
+## DECISION 25 - Candidate-Order Preserving Append
+
+**Options:** Group candidates by aggregate before insert / Preserve the candidate array's order across aggregates
+**Decision:** Preserve the candidate array's order across aggregates. Per-aggregate version cursor tracks in-batch increments.
+**Rationale:** The transfer saga writes `[Initiated(source), Received(destination), Completed(source)]`. The grouping approach would insert in `[Initiated, Completed, Received]` order in the global sequence, which is wrong for downstream subscribers that expect `Received` to precede `Completed`. Preserving array order makes the API contract obvious: the caller controls the global sequence by ordering their candidates correctly. Per-aggregate version monotonicity is still enforced via the cursor.

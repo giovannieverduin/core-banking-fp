@@ -58,19 +58,15 @@ function derive(
         entry('credit', amount, systemRef('suspense', amount.currency), eventId, version),
       ];
     }
-    case 'TransferCompleted': {
+    case 'TransferReceived': {
       const amount = parseAmount(event.payload.amount, event.payload.currency);
       return [
         entry('debit', amount, systemRef('suspense', amount.currency), eventId, version),
-        entry(
-          'credit',
-          amount,
-          customerRef(event.payload.counterpartyAccountId),
-          eventId,
-          version,
-        ),
+        entry('credit', amount, customerRef(event.payload.accountId), eventId, version),
       ];
     }
+    case 'TransferCompleted':
+      return [];
     case 'TransferFailed': {
       const amount = parseAmount(event.payload.amount, event.payload.currency);
       return [
@@ -78,6 +74,8 @@ function derive(
         entry('credit', amount, customerRef(event.payload.accountId), eventId, version),
       ];
     }
+    case 'TransferRejected':
+      return [];
   }
 }
 
