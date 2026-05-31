@@ -6,17 +6,19 @@ Event-sourced. Double-entry. No sacred cows.
 
 ## Architecture
 
-The system is built in 7 layers, each independently valuable:
+The system is built in 7 layers, each independently valuable. All seven shipped:
 
-| Layer | Component | What it does |
-|-------|-----------|-------------|
-| L1 | Event Store + Domain Model | Money value object, account aggregate, append-only event log |
-| L2 | Ledger Engine | Double-entry accounting, balance projections, overdraft policies |
-| L3 | Transaction Engine | Atomic transfers, saga pattern, compensating transactions, idempotency |
-| L4 | Reconciliation Engine | Continuous verification, hash chain tamper detection |
-| L5 | API Layer + Tests | REST endpoints with Zod validation, full test suite |
-| L6 | Settlement Bridge | Pluggable adapter - mock, on-chain (EVM/Solana), SWIFT/SEPA |
-| L7 | Dashboard | Live event stream, balances, transaction graph, reconciliation status |
+| Layer | Component | What it does | Status |
+|-------|-----------|-------------|--------|
+| L1 | Event Store + Domain Model | Money value object, account aggregate, append-only event log | shipped |
+| L2 | Ledger Engine | Double-entry accounting, balance projections, overdraft policies | shipped |
+| L3 | Transaction Engine | Atomic transfers, saga pattern, compensating transactions, idempotency | shipped |
+| L4 | Reconciliation Engine | Continuous verification, SHA-256 hash chain tamper detection | shipped |
+| L5 | API Layer + Tests | Fastify routes with Zod validation, per-account API keys | shipped |
+| L6 | Settlement Bridge | Pluggable adapter - mock; interface designed for EVM, SWIFT, SEPA | shipped |
+| L7 | Dashboard | Live SSE event stream, balances, trial balance, integrity status | shipped |
+
+106 tests passing across 13 files. Strict TypeScript clean throughout.
 
 ## Core Principles
 

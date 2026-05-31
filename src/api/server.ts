@@ -6,7 +6,10 @@ import {
 } from '../domain/commands.js';
 import { Money } from '../domain/money.js';
 import type { EventStore } from '../events/event-store.js';
+import type { EventBus } from '../events/event-bus.js';
 import { balanceOf } from '../ledger/balance-projection.js';
+import { buildSnapshot } from '../dashboard/snapshot.js';
+import { DASHBOARD_HTML } from '../dashboard/index-html.js';
 import {
   HardRejectPolicy,
   fixedLimitPolicy,
@@ -42,6 +45,7 @@ export interface BuildAppOptions {
   readonly adminApiKeys: readonly string[];
   readonly apiKeys?: ApiKeyStore;
   readonly settlementAdapters?: ReadonlyMap<SettlementRail, SettlementAdapter>;
+  readonly eventBus?: EventBus;
   readonly logger?: boolean;
 }
 
@@ -57,6 +61,7 @@ export function buildApp(options: BuildAppOptions): AppContext {
   const app = Fastify({ logger: options.logger ?? false });
   const store = options.store;
   const settlementAdapters = options.settlementAdapters ?? new Map();
+  const eventBus = options.eventBus;
 
   function resolveOverdraftPolicy(
     limitStr: string | undefined,
@@ -293,6 +298,69 @@ export function buildApp(options: BuildAppOptions): AppContext {
     } catch (err) {
       return handleError(reply, err);
     }
+  });
+
+  app.get('/admin/snapshot', async (request, reply) => {
+    const token = extractBearerToken(request.headers.authorization);
+    if (!token || !adminKeys.matches(token)) {
+      return sendError(reply, 401, 'unauthorized', 'Admin key required');
+    }
+    try {
+      const snapshot = await buildSnapshot(store);
+      return reply.send(snapshot);
+    } catch (err) {
+      return handleError(reply, err);
+    }
+  });
+
+  app.get('/admin/events/stream', async (request, reply) => {
+    const query = (request.query ?? {}) as { key?: string };
+    const queryKey = typeof query.key === 'string' ? query.key : undefined;
+    const headerToken = extractBearerToken(request.headers.authorization);
+    const token = headerToken ?? queryKey;
+    if (!token || !adminKeys.matches(token)) {
+      return sendError(reply, 401, 'unauthorized', 'Admin key required');
+    }
+    if (!eventBus) {
+      return sendError(
+        reply,
+        503,
+        'no_event_bus',
+        'Server was started without an event bus; SSE stream unavailable',
+      );
+    }
+    reply.raw.writeHead(200, {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache',
+      connection: 'keep-alive',
+      'x-accel-buffering': 'no',
+    });
+    reply.raw.write(': connected\n\n');
+    const unsubscribe = eventBus.subscribe((event) => {
+      try {
+        reply.raw.write(`event: event\ndata: ${JSON.stringify(event)}\n\n`);
+      } catch {
+        // Connection closed; cleanup happens via the close handler.
+      }
+    });
+    const heartbeat = setInterval(() => {
+      try {
+        reply.raw.write(': heartbeat\n\n');
+      } catch {
+        // ignore
+      }
+    }, 15000);
+    request.raw.on('close', () => {
+      clearInterval(heartbeat);
+      unsubscribe();
+    });
+    return reply;
+  });
+
+  app.get('/dashboard', async (_request, reply) => {
+    return reply
+      .header('content-type', 'text/html; charset=utf-8')
+      .send(DASHBOARD_HTML);
   });
 
   return { app, apiKeys, adminKeys };

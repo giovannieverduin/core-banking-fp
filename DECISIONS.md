@@ -304,3 +304,35 @@
 **Options:** Record a `SettlementRejected` event (like transfers) / Throw `SettlementInputError` without persisting
 **Decision:** Throw `SettlementInputError` for validation/overdraft failures. No event written.
 **Rationale:** Transfers needed `TransferRejected` because transfers carry a client-supplied idempotency key - if we did not record the rejection, retries with the same key would re-run validation and could produce different outcomes if state changed in between. Settlements also have an idempotency key (`settlementId`), but the cost of an unrecorded rejection is much lower: a retry will simply re-validate, and if the input is still bad, throw again with the same reason. Recording every bad-input attempt would pollute the audit log with noise; meanwhile real settlement failures (adapter-reported) still write `SettlementFailed` and stay in the log. If experience proves we need stronger idempotency on settlement input failures, adding `SettlementRejected` later is mechanical.
+
+---
+
+## DECISION 38 - In-Memory EventBus, Not a Persistent Queue
+
+**Options:** No live notification (poll only) / In-memory EventBus / Persistent queue (Redis, Kafka)
+**Decision:** Lightweight in-memory `EventBus` with synchronous publish, optionally wired into the store. Subscribers are listener callbacks scoped to the lifetime of the process.
+**Rationale:** A persistent queue would be a second source of truth that can drift from the log. The log already is the durable history - subscribers that need durability can replay from the log on startup, and live subscribers (dashboard, compliance, settlement webhooks) only need at-most-once delivery during their connection. A throwing subscriber must not affect the publisher, so `publish` swallows listener exceptions. The store accepts an optional bus; without it, behavior is identical to pre-Layer-7, which keeps Layer 1-6 tests untouched.
+
+---
+
+## DECISION 39 - SSE Over WebSockets for the Dashboard
+
+**Options:** WebSocket / Server-Sent Events / Long-polling / Client-side polling only
+**Decision:** Server-Sent Events at `GET /admin/events/stream`. Heartbeat every 15s. Auth via query-param `?key=...` because `EventSource` cannot set request headers.
+**Rationale:** The dashboard is one-way (server -> client); WebSockets add bi-directional capability we do not need plus framing overhead and reconnect logic the browser already handles for SSE. Long-polling reinvents what SSE solves natively. Query-param auth is a pragmatic concession to the EventSource API spec - the alternative is forcing every browser client to ship a hand-rolled `fetch`+stream-parsing implementation. The token is over TLS in production and short-lived rotation is the right defence; the URL ends up in browser history, which is an acceptable tradeoff for an internal admin dashboard.
+
+---
+
+## DECISION 40 - Inline Dashboard HTML in a TS Module
+
+**Options:** Static asset served via `@fastify/static` / Build-time bundling with a frontend tool / Inline HTML as a template literal in TS
+**Decision:** Inline the dashboard HTML as a TypeScript module exporting a string constant.
+**Rationale:** A static asset directory adds a dependency (`@fastify/static`) and asset-resolution complexity for ESM modules (no `__dirname`, `import.meta.url` gymnastics). A frontend bundler is overkill for a 200-line single-file dashboard with no build pipeline elsewhere in the project. Inlining keeps everything in TypeScript-land, the HTML ships with the source, type-checking covers the entire codebase including the dashboard wire-up, and there are zero new dependencies. If the dashboard grows beyond what one file can hold, splitting into a real asset pipeline is straightforward.
+
+---
+
+## DECISION 41 - Snapshot Endpoint Returns Everything in One Call
+
+**Options:** One endpoint per resource (accounts, ledger, trial-balance, events) / Single composite snapshot endpoint
+**Decision:** `GET /admin/snapshot` returns customer accounts, system accounts, external accounts, trial balance, integrity summary, and recent events in one response.
+**Rationale:** The dashboard wants a coherent point-in-time view. Splitting the snapshot across four endpoints introduces tearing - the customer balance you see may be from before a transfer that the trial balance you see is after. A single endpoint runs all derivations from the same `readAll()` snapshot, so the response is internally consistent. The cost is response-size growth, but for MVP scale that is trivial and the dashboard is the only intended consumer. Future per-resource endpoints can be added without removing this one.

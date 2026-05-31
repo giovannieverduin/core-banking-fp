@@ -13,6 +13,7 @@ import {
   computeEventHash,
   type StoredEvent,
 } from '../reconciliation/hash-chain.js';
+import type { EventBus } from './event-bus.js';
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS events (
@@ -72,14 +73,23 @@ function rowToEvent(row: EventRow): StoredEvent {
   };
 }
 
-export class SqliteEventStore implements EventStore {
-  private constructor(private readonly db: Database) {}
+export interface SqliteEventStoreOptions {
+  readonly bus?: EventBus;
+}
 
-  static async open(): Promise<SqliteEventStore> {
+export class SqliteEventStore implements EventStore {
+  private constructor(
+    private readonly db: Database,
+    private readonly bus?: EventBus,
+  ) {}
+
+  static async open(
+    options: SqliteEventStoreOptions = {},
+  ): Promise<SqliteEventStore> {
     const SQL = await initSqlJs();
     const db = new SQL.Database();
     db.exec(SCHEMA);
-    return new SqliteEventStore(db);
+    return new SqliteEventStore(db, options.bus);
   }
 
   async append(
@@ -126,6 +136,9 @@ export class SqliteEventStore implements EventStore {
         previousHash = hash;
       }
       this.db.run('COMMIT');
+      if (this.bus) {
+        for (const event of written) this.bus.publish(event);
+      }
       return written;
     } catch (err) {
       this.db.run('ROLLBACK');
