@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../src/api/server.js';
 import { SqliteEventStore } from '../src/events/sqlite-event-store.js';
+import { MockSettlementAdapter } from '../src/settlement/mock-adapter.js';
+import type { SettlementAdapter } from '../src/settlement/adapter.js';
+import type { SettlementRail } from '../src/settlement/types.js';
 
 const ADMIN_KEY = 'admin-test-key-do-not-use-in-prod';
 
@@ -13,7 +16,14 @@ let harness: Harness;
 
 beforeEach(async () => {
   const store = await SqliteEventStore.open();
-  const { app } = buildApp({ store, adminApiKeys: [ADMIN_KEY] });
+  const adapters = new Map<SettlementRail, SettlementAdapter>([
+    ['MOCK', new MockSettlementAdapter()],
+  ]);
+  const { app } = buildApp({
+    store,
+    adminApiKeys: [ADMIN_KEY],
+    settlementAdapters: adapters,
+  });
   harness = { app };
 });
 
@@ -332,6 +342,77 @@ describe('GET /transfers/:transferId', () => {
       headers: { authorization: `Bearer ${a.apiKey}` },
     });
     expect(res.statusCode).toBe(404);
+  });
+});
+
+describe('POST /accounts/:id/settlements', () => {
+  it('settles an outbound payment via the MOCK rail', async () => {
+    const { accountId, apiKey } = await createAccountViaApi('Gio', 'USD');
+    await harness.app.inject({
+      method: 'POST',
+      url: `/accounts/${accountId}/deposits`,
+      headers: { authorization: `Bearer ${apiKey}` },
+      payload: { amount: '500', currency: 'USD', reference: 'seed' },
+    });
+    const res = await harness.app.inject({
+      method: 'POST',
+      url: `/accounts/${accountId}/settlements`,
+      headers: { authorization: `Bearer ${apiKey}` },
+      payload: {
+        amount: '120',
+        currency: 'USD',
+        externalAccount: { rail: 'MOCK', identifier: 'iban:GB29-test' },
+        direction: 'outbound',
+        cycle: 'T+0',
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json()).toMatchObject({ status: 'settled' });
+
+    const bal = await harness.app.inject({
+      method: 'GET',
+      url: `/accounts/${accountId}/balance`,
+      headers: { authorization: `Bearer ${apiKey}` },
+    });
+    expect(bal.json()).toMatchObject({
+      balance: { amount: '380', currency: 'USD' },
+    });
+  });
+
+  it('rejects with 400 when no adapter is registered for the rail', async () => {
+    const { accountId, apiKey } = await createAccountViaApi('Gio', 'USD');
+    const res = await harness.app.inject({
+      method: 'POST',
+      url: `/accounts/${accountId}/settlements`,
+      headers: { authorization: `Bearer ${apiKey}` },
+      payload: {
+        amount: '10',
+        currency: 'USD',
+        externalAccount: { rail: 'EVM', identifier: 'eth:0xabc' },
+        direction: 'outbound',
+        cycle: 'T+0',
+      },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: 'unknown_settlement_rail' });
+  });
+
+  it('returns 422 when overdraft policy blocks outbound settlement', async () => {
+    const { accountId, apiKey } = await createAccountViaApi('Gio', 'USD');
+    const res = await harness.app.inject({
+      method: 'POST',
+      url: `/accounts/${accountId}/settlements`,
+      headers: { authorization: `Bearer ${apiKey}` },
+      payload: {
+        amount: '1000',
+        currency: 'USD',
+        externalAccount: { rail: 'MOCK', identifier: 'iban:x' },
+        direction: 'outbound',
+        cycle: 'T+0',
+      },
+    });
+    expect(res.statusCode).toBe(422);
+    expect(res.json()).toMatchObject({ error: 'settlement_input_error' });
   });
 });
 

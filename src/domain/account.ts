@@ -96,6 +96,27 @@ function applyEvent(
     }
     case 'TransferRejected':
       return balance;
+    case 'SettlementInitiated': {
+      assertCurrency(event.payload.currency, currency);
+      if (event.payload.direction === 'outbound') {
+        return balance.subtract(Money.of(event.payload.amount, currency));
+      }
+      return balance;
+    }
+    case 'SettlementSettled': {
+      assertCurrency(event.payload.currency, currency);
+      if (event.payload.direction === 'inbound') {
+        return balance.add(Money.of(event.payload.amount, currency));
+      }
+      return balance;
+    }
+    case 'SettlementFailed': {
+      assertCurrency(event.payload.currency, currency);
+      if (event.payload.direction === 'outbound') {
+        return balance.add(Money.of(event.payload.amount, currency));
+      }
+      return balance;
+    }
   }
 }
 

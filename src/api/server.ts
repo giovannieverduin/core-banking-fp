@@ -15,6 +15,12 @@ import {
 import { executeTransfer } from '../transactions/transfer.js';
 import { reconcile } from '../reconciliation/reconcile.js';
 import {
+  requestSettlement,
+  SettlementInputError,
+} from '../settlement/commands.js';
+import type { SettlementAdapter } from '../settlement/adapter.js';
+import type { SettlementRail } from '../settlement/types.js';
+import {
   AdminKeyStore,
   ApiKeyStore,
   authenticateAccount,
@@ -25,6 +31,7 @@ import {
   AccountIdParam,
   CreateAccountBody,
   DepositBody,
+  SettlementBody,
   TransferBody,
   TransferIdParam,
   WithdrawBody,
@@ -34,6 +41,7 @@ export interface BuildAppOptions {
   readonly store: EventStore;
   readonly adminApiKeys: readonly string[];
   readonly apiKeys?: ApiKeyStore;
+  readonly settlementAdapters?: ReadonlyMap<SettlementRail, SettlementAdapter>;
   readonly logger?: boolean;
 }
 
@@ -48,6 +56,7 @@ export function buildApp(options: BuildAppOptions): AppContext {
   const adminKeys = new AdminKeyStore(options.adminApiKeys);
   const app = Fastify({ logger: options.logger ?? false });
   const store = options.store;
+  const settlementAdapters = options.settlementAdapters ?? new Map();
 
   function resolveOverdraftPolicy(
     limitStr: string | undefined,
@@ -215,6 +224,46 @@ export function buildApp(options: BuildAppOptions): AppContext {
         reason,
       });
     } catch (err) {
+      return handleError(reply, err);
+    }
+  });
+
+  app.post('/accounts/:id/settlements', async (request, reply) => {
+    try {
+      const params = AccountIdParam.parse(request.params);
+      const body = SettlementBody.parse(request.body);
+      const auth = authenticateAccount(apiKeys, request.headers.authorization);
+      if (!auth.ok) return sendError(reply, 401, 'unauthorized', auth.reason);
+      if (auth.accountId !== params.id) {
+        return sendError(reply, 403, 'forbidden', 'API key does not match account');
+      }
+      const adapter = settlementAdapters.get(body.externalAccount.rail);
+      if (!adapter) {
+        return sendError(
+          reply,
+          400,
+          'unknown_settlement_rail',
+          `No settlement adapter registered for rail ${body.externalAccount.rail}`,
+        );
+      }
+      const policy = resolveOverdraftPolicy(body.overdraftLimit, body.currency);
+      const outcome = await requestSettlement(store, adapter, {
+        accountId: params.id,
+        externalAccount: body.externalAccount,
+        amount: Money.of(body.amount, body.currency),
+        direction: body.direction,
+        cycle: body.cycle,
+        settlementId: body.settlementId,
+        overdraftPolicy: policy,
+      });
+      const status = outcome.status === 'settled' ? 201 : 422;
+      return reply.status(status).send(outcome);
+    } catch (err) {
+      if (err instanceof SettlementInputError) {
+        return reply
+          .status(422)
+          .send({ error: 'settlement_input_error', message: err.message });
+      }
       return handleError(reply, err);
     }
   });

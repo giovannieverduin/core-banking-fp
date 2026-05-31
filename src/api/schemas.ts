@@ -2,6 +2,11 @@ import { z } from 'zod';
 import { CurrencySchema } from '../domain/currency.js';
 import { AccountIdSchema } from '../domain/account-id.js';
 import { TransferIdSchema } from '../transactions/transfer-id.js';
+import {
+  ExternalAccountRefSchema,
+  SettlementCycleSchema,
+} from '../settlement/types.js';
+import { SettlementIdSchema } from '../settlement/settlement-id.js';
 
 const DecimalAmountSchema = z
   .string()
@@ -41,7 +46,16 @@ export const TransferIdParam = z.object({
   transferId: TransferIdSchema,
 });
 
+export const SettlementBody = MoneyBody.extend({
+  externalAccount: ExternalAccountRefSchema,
+  direction: z.enum(['outbound', 'inbound']),
+  cycle: SettlementCycleSchema,
+  settlementId: SettlementIdSchema.optional(),
+  overdraftLimit: DecimalAmountSchema.optional(),
+});
+
 export type CreateAccountBodyT = z.infer<typeof CreateAccountBody>;
 export type DepositBodyT = z.infer<typeof DepositBody>;
 export type WithdrawBodyT = z.infer<typeof WithdrawBody>;
 export type TransferBodyT = z.infer<typeof TransferBody>;
+export type SettlementBodyT = z.infer<typeof SettlementBody>;

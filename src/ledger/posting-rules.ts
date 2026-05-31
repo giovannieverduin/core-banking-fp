@@ -3,6 +3,7 @@ import { Money } from '../domain/money.js';
 import type { AccountEvent } from '../events/types.js';
 import {
   customerRef,
+  externalRef,
   systemRef,
   type LedgerAccountRef,
 } from './account-ref.js';
@@ -76,6 +77,69 @@ function derive(
     }
     case 'TransferRejected':
       return [];
+    case 'SettlementInitiated': {
+      const amount = parseAmount(event.payload.amount, event.payload.currency);
+      if (event.payload.direction === 'outbound') {
+        return [
+          entry('debit', amount, customerRef(event.payload.accountId), eventId, version),
+          entry(
+            'credit',
+            amount,
+            systemRef('settlement-pending', amount.currency),
+            eventId,
+            version,
+          ),
+        ];
+      }
+      return [];
+    }
+    case 'SettlementSettled': {
+      const amount = parseAmount(event.payload.amount, event.payload.currency);
+      if (event.payload.direction === 'outbound') {
+        return [
+          entry(
+            'debit',
+            amount,
+            systemRef('settlement-pending', amount.currency),
+            eventId,
+            version,
+          ),
+          entry(
+            'credit',
+            amount,
+            externalRef(event.payload.rail, amount.currency),
+            eventId,
+            version,
+          ),
+        ];
+      }
+      return [
+        entry(
+          'debit',
+          amount,
+          externalRef(event.payload.rail, amount.currency),
+          eventId,
+          version,
+        ),
+        entry('credit', amount, customerRef(event.payload.accountId), eventId, version),
+      ];
+    }
+    case 'SettlementFailed': {
+      const amount = parseAmount(event.payload.amount, event.payload.currency);
+      if (event.payload.direction === 'outbound') {
+        return [
+          entry(
+            'debit',
+            amount,
+            systemRef('settlement-pending', amount.currency),
+            eventId,
+            version,
+          ),
+          entry('credit', amount, customerRef(event.payload.accountId), eventId, version),
+        ];
+      }
+      return [];
+    }
   }
 }
 

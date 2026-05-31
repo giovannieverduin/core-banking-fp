@@ -4,6 +4,7 @@ import { CommandError } from '../domain/commands.js';
 import { UnknownAccountError } from '../ledger/balance-projection.js';
 import { ConcurrencyError } from '../events/event-store.js';
 import { TransferInputError } from '../transactions/transfer.js';
+import { SettlementInputError } from '../settlement/commands.js';
 import {
   CurrencyMismatchError,
   InvalidMoneyError,
@@ -37,6 +38,9 @@ export function handleError(reply: FastifyReply, err: unknown): FastifyReply {
   }
   if (err instanceof TransferInputError) {
     return sendError(reply, 400, 'transfer_input_error', err.message);
+  }
+  if (err instanceof SettlementInputError) {
+    return sendError(reply, 400, 'settlement_input_error', err.message);
   }
   if (err instanceof CommandError) {
     return sendError(reply, 400, 'command_error', err.message);

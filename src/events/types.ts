@@ -1,5 +1,11 @@
 import type { AccountId } from '../domain/account-id.js';
 import type { Currency } from '../domain/currency.js';
+import type {
+  SettlementCycle,
+  SettlementDirection,
+  SettlementId,
+  SettlementRail,
+} from '../settlement/types.js';
 
 declare const transferIdBrand: unique symbol;
 export type TransferId = string & { readonly [transferIdBrand]: true };
@@ -81,6 +87,44 @@ export interface TransferRejectedPayload {
   readonly reason: string;
 }
 
+export interface SettlementInitiatedPayload {
+  readonly type: 'SettlementInitiated';
+  readonly accountId: AccountId;
+  readonly settlementId: SettlementId;
+  readonly rail: SettlementRail;
+  readonly externalIdentifier: string;
+  readonly direction: SettlementDirection;
+  readonly cycle: SettlementCycle;
+  readonly amount: string;
+  readonly currency: Currency;
+}
+
+export interface SettlementSettledPayload {
+  readonly type: 'SettlementSettled';
+  readonly accountId: AccountId;
+  readonly settlementId: SettlementId;
+  readonly rail: SettlementRail;
+  readonly externalIdentifier: string;
+  readonly externalRef: string;
+  readonly direction: SettlementDirection;
+  readonly amount: string;
+  readonly currency: Currency;
+  readonly settledAt: string;
+}
+
+export interface SettlementFailedPayload {
+  readonly type: 'SettlementFailed';
+  readonly accountId: AccountId;
+  readonly settlementId: SettlementId;
+  readonly rail: SettlementRail;
+  readonly externalIdentifier: string;
+  readonly direction: SettlementDirection;
+  readonly amount: string;
+  readonly currency: Currency;
+  readonly reason: string;
+  readonly settledAt: string;
+}
+
 export type EventPayload =
   | AccountCreatedPayload
   | MoneyDepositedPayload
@@ -89,7 +133,10 @@ export type EventPayload =
   | TransferReceivedPayload
   | TransferCompletedPayload
   | TransferFailedPayload
-  | TransferRejectedPayload;
+  | TransferRejectedPayload
+  | SettlementInitiatedPayload
+  | SettlementSettledPayload
+  | SettlementFailedPayload;
 
 export type EventType = EventPayload['type'];
 

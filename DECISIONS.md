@@ -272,3 +272,35 @@
 **Options:** Treat domain rejection as 200 with `status: rejected` / 400 (bad request) / 422 (unprocessable entity)
 **Decision:** Successful transfer returns 201. Domain-level rejection (insufficient funds, currency mismatch, same-account) returns 422 with the same response shape. 400 is reserved for schema/validation failures.
 **Rationale:** Distinguishing schema errors (400) from business-rule failures (422) gives API clients a clean retry signal: 400 means "fix your request and try again," 422 means "the request was valid but the system refused to execute it." Returning 200 for rejection would force clients to always inspect the body to know success; HTTP status codes exist to short-circuit that. 201 for the success case follows the REST convention that a transfer creates a new resource (the transfer record). Rejected-but-recorded transfers are still resources in the audit sense, but 422 communicates "did not create the intended effect" more clearly.
+
+---
+
+## DECISION 34 - Settlement Adapter is the Product
+
+**Options:** Embed settlement logic in the engine / Settlement as a pluggable adapter behind an interface
+**Decision:** `SettlementAdapter` is an interface with one method (`submit(instruction): Promise<SettlementResult>`). Mock implementation ships in MVP. Future EVM/SWIFT/SEPA implementations slot in without touching domain code.
+**Rationale:** Decision 04 already committed to this direction; Layer 6 honours it concretely. Each settlement rail has wildly different semantics (block confirmation, FX, message formats, settlement windows) - baking any of that into the engine would mean rewriting the core every time a new rail is added. The interface is deliberately small: an instruction in, a result out. Anything richer (callbacks, partial settlement, batching) is the adapter's job. The mock is intentionally trivial so it stays out of the way during MVP testing, with optional failure-injection hooks for tests.
+
+---
+
+## DECISION 35 - External Rail as a Debit-Normal Ledger Account
+
+**Options:** Treat external rail balance as informational only / Model as a credit-normal liability / Model as a debit-normal asset (nostro)
+**Decision:** Debit-normal `external` ledger account per (rail, currency), holding our net position with that rail.
+**Rationale:** In real banking, our reserves at an external rail are an asset - we have funds parked there that we can draw against. Outbound settlement credits this account (asset goes down because we just sent funds out); inbound debits it (asset goes up because funds arrived). Treating it as informational-only would mean it cannot participate in the trial balance, which would silently let books be unbalanced. Modelling it as a liability inverts the sign physics and makes overdrafts at the rail look like asset accumulation. Debit-normal nostro is the conventional accounting treatment and reuses the same normal-side machinery introduced in Layer 2.
+
+---
+
+## DECISION 36 - Settlement Saga: Initiated Then Resolved in One Call
+
+**Options:** Single atomic `Settled` event / Two-step `Initiated` then async `Settled` callback / `Initiated` then synchronous resolve in one call
+**Decision:** `requestSettlement` writes `SettlementInitiated` first (debit customer, credit settlement-pending), calls the adapter, then writes `SettlementSettled` or `SettlementFailed` based on the result. For the synchronous mock all of this happens in one function call.
+**Rationale:** A single atomic event would lose the in-flight state - if the system crashed mid-adapter-call, we would not know whether to retry or compensate. The two-event saga always leaves an audit trail of intent (`Initiated`) plus outcome (`Settled` or `Failed`), and the `settlement-pending` system account makes the in-flight position visible in the trial balance. Async adapters (real EVM, SWIFT) will use the same two-step pattern with a separate `resolveSettlement` entry point - the event shapes do not change. Customers never see a half-resolved state because either Settled or Failed always lands; the only durability risk (crash between Initiated and resolve) is a recovery-time concern, not a model concern.
+
+---
+
+## DECISION 37 - Settlement Input Rejection Throws Instead of Recording
+
+**Options:** Record a `SettlementRejected` event (like transfers) / Throw `SettlementInputError` without persisting
+**Decision:** Throw `SettlementInputError` for validation/overdraft failures. No event written.
+**Rationale:** Transfers needed `TransferRejected` because transfers carry a client-supplied idempotency key - if we did not record the rejection, retries with the same key would re-run validation and could produce different outcomes if state changed in between. Settlements also have an idempotency key (`settlementId`), but the cost of an unrecorded rejection is much lower: a retry will simply re-validate, and if the input is still bad, throw again with the same reason. Recording every bad-input attempt would pollute the audit log with noise; meanwhile real settlement failures (adapter-reported) still write `SettlementFailed` and stay in the log. If experience proves we need stronger idempotency on settlement input failures, adding `SettlementRejected` later is mechanical.
