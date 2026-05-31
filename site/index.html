@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Core Banking - First Principles | Giovanni Everduin</title>
+<meta name="description" content="A core banking system built from first principles on a flight from Dubai to Paris. Event-sourced, double-entry, 7 layers, 106 tests.">
+<meta property="og:title" content="Core Banking - First Principles">
+<meta property="og:description" content="Event-sourced core banking system built from first principles. 7 layers, 106 tests, ~6,000 lines of TypeScript.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://cbs.giovannieverduin.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --dark: #111111;
+    --navy: #0E3460;
+    --orange: #FF6B2B;
+    --white: #FFFFFF;
+    --mid: #888888;
+    --light: #CCCCCC;
+    --bg: #0a0a0a;
+    --card: #161616;
+    --card-border: #222222;
+    --green: #2D6A4F;
+    --purple: #6B3FA0;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--white);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 15px;
+    line-height: 1.6;
+    overflow-x: hidden;
+  }
+  a { color: var(--orange); text-decoration: none; transition: opacity 0.2s; }
+  a:hover { opacity: 0.8; }
+
+  /* NAV */
+  nav {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 18px 48px;
+    background: rgba(10,10,10,0.92); backdrop-filter: blur(12px);
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+  }
+  .nav-logo { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 2px; color: var(--white); text-decoration: none; }
+  .nav-logo span { color: var(--orange); }
+  .nav-links { display: flex; gap: 28px; list-style: none; }
+  .nav-links a { font-family: 'DM Mono', monospace; font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--mid); }
+  .nav-links a:hover { color: var(--orange); opacity: 1; }
+
+  /* HERO */
+  .hero {
+    min-height: 100vh; display: flex; flex-direction: column; justify-content: center;
+    padding: 120px 48px 80px; position: relative; overflow: hidden;
+  }
+  .hero::before {
+    content: ''; position: absolute; top: -200px; right: -200px;
+    width: 600px; height: 600px;
+    background: radial-gradient(circle, rgba(255,107,43,0.08) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .hero-eyebrow {
+    font-family: 'DM Mono', monospace; font-size: 11px; letter-spacing: 3px;
+    text-transform: uppercase; color: var(--orange); margin-bottom: 24px;
+  }
+  .hero-title {
+    font-family: 'Bebas Neue', sans-serif; font-size: clamp(56px, 7vw, 100px);
+    line-height: 0.95; margin-bottom: 24px;
+  }
+  .hero-title-accent { color: var(--orange); }
+  .hero-sub {
+    font-size: 17px; color: rgba(255,255,255,0.5); max-width: 560px;
+    line-height: 1.7; margin-bottom: 48px;
+  }
+
+  /* STATS BAR */
+  .stats {
+    display: flex; gap: 48px; padding: 32px 0;
+    border-top: 1px solid rgba(255,255,255,0.08);
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    margin-bottom: 0;
+  }
+  .stat-label {
+    font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: 2px;
+    text-transform: uppercase; color: var(--orange); margin-bottom: 4px;
+  }
+  .stat-value { font-family: 'Bebas Neue', sans-serif; font-size: 36px; color: var(--white); }
+
+  /* SECTIONS */
+  section { padding: 100px 48px; }
+  .section-eyebrow {
+    font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: 3px;
+    text-transform: uppercase; color: var(--orange); margin-bottom: 16px;
+  }
+  .section-title {
+    font-family: 'Bebas Neue', sans-serif; font-size: clamp(36px, 4vw, 56px);
+    line-height: 1; margin-bottom: 20px;
+  }
+  .section-body { font-size: 16px; color: rgba(255,255,255,0.45); max-width: 600px; line-height: 1.7; margin-bottom: 48px; }
+
+  /* LAYERS */
+  .layers-grid { display: grid; gap: 2px; max-width: 1100px; }
+  .layer-row {
+    display: grid; grid-template-columns: 100px 1fr 200px;
+    background: var(--card); border: 1px solid var(--card-border);
+    transition: all 0.25s; position: relative; overflow: hidden;
+  }
+  .layer-row::before {
+    content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+    background: var(--orange); transform: scaleY(0); transition: transform 0.25s;
+  }
+  .layer-row:hover::before { transform: scaleY(1); }
+  .layer-row:hover { transform: translateX(4px); border-color: rgba(255,107,43,0.2); }
+  .layer-num-cell {
+    background: var(--navy); padding: 20px; display: flex; flex-direction: column;
+    justify-content: center; align-items: center;
+  }
+  .layer-num { font-family: 'Bebas Neue', sans-serif; font-size: 28px; color: var(--orange); }
+  .layer-content { padding: 20px 24px; }
+  .layer-title { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
+  .layer-desc { font-size: 12px; color: rgba(255,255,255,0.4); line-height: 1.5; }
+  .layer-files-cell {
+    padding: 20px; border-left: 1px solid var(--card-border);
+    display: flex; flex-direction: column; justify-content: center;
+  }
+  .layer-file {
+    font-family: 'DM Mono', monospace; font-size: 10px; color: var(--orange);
+    padding: 2px 0; opacity: 0.7;
+  }
+
+  /* PRINCIPLES */
+  .principles-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; max-width: 1100px; }
+  .principle-card {
+    background: var(--card); border: 1px solid var(--card-border); padding: 32px;
+    position: relative; transition: border-color 0.25s;
+  }
+  .principle-card:hover { border-color: rgba(255,107,43,0.3); }
+  .principle-num {
+    font-family: 'Bebas Neue', sans-serif; font-size: 64px; color: rgba(255,107,43,0.12);
+    position: absolute; top: 12px; right: 16px; line-height: 1;
+  }
+  .principle-title {
+    font-family: 'Bebas Neue', sans-serif; font-size: 22px; color: var(--orange); margin-bottom: 10px;
+  }
+  .principle-body { font-size: 13px; color: rgba(255,255,255,0.45); line-height: 1.6; }
+
+  /* GITHUB CARD */
+  .github-section { padding: 80px 48px; }
+  .github-card {
+    max-width: 640px; background: var(--card); border: 1px solid var(--card-border);
+    padding: 40px; position: relative; transition: all 0.3s; display: block;
+    text-decoration: none;
+  }
+  .github-card:hover { border-color: var(--orange); box-shadow: 0 0 40px rgba(255,107,43,0.08); transform: translateY(-2px); opacity: 1; }
+  .github-card-eyebrow {
+    font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: 2px;
+    text-transform: uppercase; color: var(--mid); margin-bottom: 12px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .github-card-eyebrow svg { width: 18px; height: 18px; fill: var(--mid); }
+  .github-card-title {
+    font-family: 'Bebas Neue', sans-serif; font-size: 32px; color: var(--white); margin-bottom: 10px;
+  }
+  .github-card-desc { font-size: 14px; color: rgba(255,255,255,0.45); line-height: 1.6; margin-bottom: 20px; }
+  .github-card-meta { display: flex; gap: 24px; }
+  .github-meta-item { display: flex; align-items: center; gap: 6px; }
+  .github-meta-dot { width: 10px; height: 10px; border-radius: 50%; }
+  .github-meta-dot.ts { background: #3178c6; }
+  .github-meta-label { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--mid); }
+
+  /* STACK */
+  .stack-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 2px; max-width: 1100px; }
+  .stack-item {
+    background: var(--card); border: 1px solid var(--card-border);
+    padding: 24px 20px; text-align: center; transition: border-color 0.25s;
+  }
+  .stack-item:hover { border-color: rgba(255,107,43,0.3); }
+  .stack-name { font-family: 'DM Mono', monospace; font-size: 12px; color: var(--orange); font-weight: 500; margin-bottom: 6px; }
+  .stack-role { font-size: 11px; color: rgba(255,255,255,0.35); }
+
+  /* DECISIONS PREVIEW */
+  .decisions-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; max-width: 1100px; }
+  .decision-card {
+    background: var(--card); border: 1px solid var(--card-border); padding: 24px;
+    transition: border-color 0.25s;
+  }
+  .decision-card:hover { border-color: rgba(255,107,43,0.2); }
+  .decision-num {
+    font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: 1.5px;
+    color: var(--orange); margin-bottom: 8px;
+  }
+  .decision-title { font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+  .decision-choice { font-size: 12px; color: rgba(255,255,255,0.4); }
+  .decision-choice::before { content: '-> '; color: var(--orange); }
+
+  /* FLIGHT LOG */
+  .flight-log {
+    max-width: 1100px; background: var(--card); border: 1px solid var(--card-border);
+    border-left: 3px solid var(--orange); padding: 32px 40px;
+    font-family: 'DM Mono', monospace; font-size: 12px; line-height: 2;
+    color: rgba(255,255,255,0.5);
+  }
+  .flight-log .hash { color: var(--orange); }
+  .flight-log .msg { color: rgba(255,255,255,0.7); }
+
+  /* FOOTER */
+  footer {
+    padding: 48px; display: flex; justify-content: space-between; align-items: center;
+    border-top: 1px solid rgba(255,255,255,0.06);
+  }
+  .footer-logo { font-family: 'Bebas Neue', sans-serif; font-size: 28px; letter-spacing: 2px; }
+  .footer-logo span { color: var(--orange); }
+  .footer-text { font-family: 'DM Mono', monospace; font-size: 11px; color: rgba(255,255,255,0.25); text-align: right; line-height: 1.6; }
+
+  /* RESPONSIVE */
+  @media (max-width: 768px) {
+    nav { padding: 14px 20px; }
+    .nav-links { display: none; }
+    .hero { padding: 100px 20px 60px; }
+    section { padding: 60px 20px; }
+    .stats { flex-wrap: wrap; gap: 24px; }
+    .principles-grid { grid-template-columns: 1fr; }
+    .stack-grid { grid-template-columns: repeat(3, 1fr); }
+    .layer-row { grid-template-columns: 80px 1fr; }
+    .layer-files-cell { display: none; }
+    .decisions-grid { grid-template-columns: 1fr; }
+    .github-section { padding: 60px 20px; }
+    footer { flex-direction: column; gap: 16px; text-align: center; }
+  }
+
+  /* ANIMATIONS */
+  .reveal { opacity: 0; transform: translateY(20px); transition: opacity 0.6s ease, transform 0.6s ease; }
+  .reveal.visible { opacity: 1; transform: translateY(0); }
+</style>
+</head>
+<body>
+
+<nav>
+  <a href="https://giovannieverduin.com" class="nav-logo">GIO<span>/</span></a>
+  <ul class="nav-links">
+    <li><a href="#layers">Layers</a></li>
+    <li><a href="#principles">Principles</a></li>
+    <li><a href="#stack">Stack</a></li>
+    <li><a href="#decisions">Decisions</a></li>
+    <li><a href="#repo">Repo</a></li>
+    <li><a href="https://giovannieverduin.com">Back to site</a></li>
+  </ul>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-eyebrow">Dubai to Paris &nbsp;|&nbsp; 38,000 ft &nbsp;|&nbsp; No Sacred Cows</div>
+  <h1 class="hero-title">
+    Core Banking<br>
+    <span class="hero-title-accent">First Principles</span>
+  </h1>
+  <p class="hero-sub">
+    Takeoff was delayed by an hour. Used the time for prep work - first-principles design specs, a focus group of assumptions to challenge, and scaffolding the repo. Once airborne, all seven layers shipped. Event-sourced. Double-entry. No inherited assumptions.
+  </p>
+  <div class="stats">
+    <div>
+      <div class="stat-label">Layers</div>
+      <div class="stat-value">7 / 7</div>
+    </div>
+    <div>
+      <div class="stat-label">Tests</div>
+      <div class="stat-value">106</div>
+    </div>
+    <div>
+      <div class="stat-label">Decisions</div>
+      <div class="stat-value">41</div>
+    </div>
+    <div>
+      <div class="stat-label">Lines</div>
+      <div class="stat-value">~6,000</div>
+    </div>
+    <div>
+      <div class="stat-label">Stack</div>
+      <div class="stat-value">TS</div>
+    </div>
+    <div>
+      <div class="stat-label">Altitude</div>
+      <div class="stat-value">38,001 ft</div>
+    </div>
+  </div>
+</section>
+
+<!-- LAYERS -->
+<section id="layers">
+  <div class="section-eyebrow reveal">Architecture</div>
+  <div class="section-title reveal">7 Layers. All Shipped.</div>
+  <div class="section-body reveal">Each layer is independently valuable. Each has passing tests and a clean commit. Built bottom-up - from atoms to interface.</div>
+  <div class="layers-grid reveal">
+    <div class="layer-row">
+      <div class="layer-num-cell"><div class="layer-num">L1</div></div>
+      <div class="layer-content">
+        <div class="layer-title">Event Store + Domain Model</div>
+        <div class="layer-desc">Money value object, account aggregate, append-only event log. Branded AccountId, optimistic concurrency, per-aggregate versioning.</div>
+      </div>
+      <div class="layer-files-cell">
+        <div class="layer-file">src/domain/money.ts</div>
+        <div class="layer-file">src/domain/account.ts</div>
+        <div class="layer-file">src/events/sqlite-event-store.ts</div>
+      </div>
+    </div>
+    <div class="layer-row">
+      <div class="layer-num-cell"><div class="layer-num">L2</div></div>
+      <div class="layer-content">
+        <div class="layer-title">Ledger Engine</div>
+        <div class="layer-desc">Double-entry accounting enforced at engine level. Pure posting rules. Pluggable overdraft policy. Per-currency trial balance.</div>
+      </div>
+      <div class="layer-files-cell">
+        <div class="layer-file">src/ledger/ledger-engine.ts</div>
+        <div class="layer-file">src/ledger/posting-rules.ts</div>
+        <div class="layer-file">src/ledger/overdraft-policy.ts</div>
+      </div>
+    </div>
+    <div class="layer-row">
+      <div class="layer-num-cell"><div class="layer-num">L3</div></div>
+      <div class="layer-content">
+        <div class="layer-title">Transaction Engine</div>
+        <div class="layer-desc">Atomic transfers with saga pattern. Compensating transactions on failure. Idempotency keys. No partial states survive.</div>
+      </div>
+      <div class="layer-files-cell">
+        <div class="layer-file">src/transactions/transaction-saga.ts</div>
+        <div class="layer-file">src/transactions/transaction-engine.ts</div>
+        <div class="layer-file">src/transactions/idempotency-store.ts</div>
+      </div>
+    </div>
+    <div class="layer-row">
+      <div class="layer-num-cell"><div class="layer-num">L4</div></div>
+      <div class="layer-content">
+        <div class="layer-title">Reconciliation Engine</div>
+        <div class="layer-desc">Continuous verification. SHA-256 hash chain on every event. Balance verified against full event replay. Tamper detection built in.</div>
+      </div>
+      <div class="layer-files-cell">
+        <div class="layer-file">src/reconciliation/</div>
+        <div class="layer-file">reconciliation-engine.ts</div>
+      </div>
+    </div>
+    <div class="layer-row">
+      <div class="layer-num-cell"><div class="layer-num">L5</div></div>
+      <div class="layer-content">
+        <div class="layer-title">API Layer + Test Suite</div>
+        <div class="layer-desc">Fastify REST endpoints. Zod-validated inputs. Per-account API key auth with JWT-ready interface. 19 integration tests.</div>
+      </div>
+      <div class="layer-files-cell">
+        <div class="layer-file">src/api/</div>
+        <div class="layer-file">POST /accounts</div>
+        <div class="layer-file">POST /transfers</div>
+      </div>
+    </div>
+    <div class="layer-row">
+      <div class="layer-num-cell"><div class="layer-num">L6</div></div>
+      <div class="layer-content">
+        <div class="layer-title">Settlement Bridge</div>
+        <div class="layer-desc">Pluggable adapter pattern. Mock settlement simulating T+0, T+1, T+2. On-chain interface designed for EVM and Solana.</div>
+      </div>
+      <div class="layer-files-cell">
+        <div class="layer-file">src/settlement/</div>
+        <div class="layer-file">settlement-adapter.ts</div>
+        <div class="layer-file">mock-settlement.ts</div>
+      </div>
+    </div>
+    <div class="layer-row">
+      <div class="layer-num-cell"><div class="layer-num">L7</div></div>
+      <div class="layer-content">
+        <div class="layer-title">Dashboard + Visualiser</div>
+        <div class="layer-desc">Live SSE event stream. Account balances. Trial balance. Transaction forms. Reconciliation status. The system made visible.</div>
+      </div>
+      <div class="layer-files-cell">
+        <div class="layer-file">src/dashboard/</div>
+        <div class="layer-file">GET / (served by Fastify)</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- PRINCIPLES -->
+<section id="principles" style="background: #0d0d0d;">
+  <div class="section-eyebrow reveal">First Principles</div>
+  <div class="section-title reveal">What does a bank actually do?</div>
+  <div class="section-body reveal">Strip everything away. A bank does exactly three things. Everything else is logic layered on top.</div>
+  <div class="principles-grid reveal">
+    <div class="principle-card">
+      <div class="principle-num">01</div>
+      <div class="principle-title">It Holds Value</div>
+      <div class="principle-body">An account is a claim on a balance. The balance is derived from history, not stored as a number. The event log is the source of truth.</div>
+    </div>
+    <div class="principle-card">
+      <div class="principle-num">02</div>
+      <div class="principle-title">It Moves Value</div>
+      <div class="principle-body">A transaction is a debit on one claim and a credit on another. Simultaneously. Atomically. No partial states. No intermediate moments.</div>
+    </div>
+    <div class="principle-card">
+      <div class="principle-num">03</div>
+      <div class="principle-title">It Records Everything</div>
+      <div class="principle-body">Every movement is immutable. Every state is derivable from history. The log is not a backup. The log is the system.</div>
+    </div>
+  </div>
+</section>
+
+<!-- STACK -->
+<section id="stack">
+  <div class="section-eyebrow reveal">Technology</div>
+  <div class="section-title reveal">The Stack</div>
+  <div class="section-body reveal">Every choice made for a reason. Every reason documented in DECISIONS.md.</div>
+  <div class="stack-grid reveal">
+    <div class="stack-item">
+      <div class="stack-name">TypeScript</div>
+      <div class="stack-role">Strict mode. No any.</div>
+    </div>
+    <div class="stack-item">
+      <div class="stack-name">Decimal.js</div>
+      <div class="stack-role">Money arithmetic</div>
+    </div>
+    <div class="stack-item">
+      <div class="stack-name">sql.js</div>
+      <div class="stack-role">SQLite via WASM</div>
+    </div>
+    <div class="stack-item">
+      <div class="stack-name">Fastify</div>
+      <div class="stack-role">API framework</div>
+    </div>
+    <div class="stack-item">
+      <div class="stack-name">Zod</div>
+      <div class="stack-role">Schema validation</div>
+    </div>
+    <div class="stack-item">
+      <div class="stack-name">Vitest</div>
+      <div class="stack-role">106 tests</div>
+    </div>
+  </div>
+</section>
+
+<!-- DECISIONS -->
+<section id="decisions" style="background: #0d0d0d;">
+  <div class="section-eyebrow reveal">Decision Log</div>
+  <div class="section-title reveal">41 Decisions. All Documented.</div>
+  <div class="section-body reveal">Every architectural choice logged the moment it was made. Here are the headlines.</div>
+  <div class="decisions-grid reveal">
+    <div class="decision-card">
+      <div class="decision-num">DECISION 01</div>
+      <div class="decision-title">Account Identity</div>
+      <div class="decision-choice">UUID internally, IBAN-format display</div>
+    </div>
+    <div class="decision-card">
+      <div class="decision-num">DECISION 02</div>
+      <div class="decision-title">Multi-Currency</div>
+      <div class="decision-choice">Currency-aware from day one</div>
+    </div>
+    <div class="decision-card">
+      <div class="decision-num">DECISION 03</div>
+      <div class="decision-title">Overdraft Policy</div>
+      <div class="decision-choice">Pluggable interface, default hard reject</div>
+    </div>
+    <div class="decision-card">
+      <div class="decision-num">DECISION 06</div>
+      <div class="decision-title">Compliance Hooks</div>
+      <div class="decision-choice">Event-driven. Core never knows compliance exists.</div>
+    </div>
+    <div class="decision-card">
+      <div class="decision-num">DECISION 11</div>
+      <div class="decision-title">Money Arithmetic</div>
+      <div class="decision-choice">Throw on mixed currency. Never coerce silently.</div>
+    </div>
+    <div class="decision-card">
+      <div class="decision-num">DECISION 13</div>
+      <div class="decision-title">Projections</div>
+      <div class="decision-choice">Pure functions. No cached state. Ever.</div>
+    </div>
+    <div class="decision-card">
+      <div class="decision-num">DECISION 14</div>
+      <div class="decision-title">Concurrency</div>
+      <div class="decision-choice">Optimistic with expectedVersion</div>
+    </div>
+    <div class="decision-card">
+      <div class="decision-num">DECISION 15</div>
+      <div class="decision-title">Posting Rules</div>
+      <div class="decision-choice">Pure projection. Events stay business-level.</div>
+    </div>
+  </div>
+</section>
+
+<!-- COMMIT LOG -->
+<section>
+  <div class="section-eyebrow reveal">Git Log</div>
+  <div class="section-title reveal">Commit History</div>
+  <div class="section-body reveal">One layer per commit. Clean restore points all the way down.</div>
+  <div class="flight-log reveal">
+    <div><span class="hash">301885c</span> <span class="msg">layer 7: live dashboard with SSE event stream</span></div>
+    <div><span class="hash">ad40da5</span> <span class="msg">layer 6: pluggable settlement adapter with mock rail</span></div>
+    <div><span class="hash">705d265</span> <span class="msg">layer 5: REST API with Zod validation and per-account auth</span></div>
+    <div><span class="hash">626815b</span> <span class="msg">layer 4: hash-chained event log + reconciliation pipeline</span></div>
+    <div><span class="hash">afa9ad1</span> <span class="msg">layer 3: atomic transfers, saga events, idempotency</span></div>
+    <div><span class="hash">9cba44a</span> <span class="msg">layer 2: double-entry ledger + pluggable overdraft</span></div>
+    <div><span class="hash">6560bb4</span> <span class="msg">layer 1: event store + domain model</span></div>
+    <div><span class="hash">c8b03e0</span> <span class="msg">scaffold: initial project structure</span></div>
+  </div>
+</section>
+
+<!-- GITHUB CARD -->
+<section id="repo" class="github-section" style="background: #0d0d0d;">
+  <div class="section-eyebrow reveal">Source Code</div>
+  <div class="section-title reveal">Open Source</div>
+  <div class="section-body reveal">The full system. Every line. Every test. Every decision.</div>
+  <a href="https://github.com/geverduin/core-banking-fp" target="_blank" class="github-card reveal">
+    <div class="github-card-eyebrow">
+      <svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      PUBLIC REPOSITORY
+    </div>
+    <div class="github-card-title">core-banking-fp</div>
+    <div class="github-card-desc">A core banking system built from first principles on a flight from Dubai to Paris. Event-sourced, double-entry, 7 layers, 106 tests.</div>
+    <div class="github-card-meta">
+      <div class="github-meta-item"><div class="github-meta-dot ts"></div><span class="github-meta-label">TypeScript</span></div>
+      <div class="github-meta-item"><span class="github-meta-label">106 tests</span></div>
+      <div class="github-meta-item"><span class="github-meta-label">~6,000 lines</span></div>
+    </div>
+  </a>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="footer-logo">GIO<span>/</span></div>
+  <div class="footer-text">
+    Built at 38,001 ft<br>
+    Dubai to Paris &nbsp;|&nbsp; No sacred cows
+  </div>
+</footer>
+
+<script>
+  const reveals = document.querySelectorAll('.reveal');
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach((e, i) => {
+      if (e.isIntersecting) {
+        setTimeout(() => e.target.classList.add('visible'), i * 60);
+        observer.unobserve(e.target);
+      }
+    });
+  }, { threshold: 0.1 });
+  reveals.forEach(r => observer.observe(r));
+</script>
+</body>
+</html>
