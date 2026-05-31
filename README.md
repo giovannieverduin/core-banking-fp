@@ -2,9 +2,9 @@
 
 A core banking system built from first principles on a flight from Dubai to Paris.
 
-Takeoff was delayed by an hour. Used the time for prep work - first-principles design specs, a focus group of assumptions to challenge, and scaffolding the repo. Once airborne, all seven layers shipped.
+Takeoff was delayed by an hour. I used the time for prep work - first-principles design specs, a focus group of assumptions to challenge, and mapping out the repo. Once we were finally airborne, all seven layers shipped through Claude Code.
 
-Event-sourced. Double-entry. No sacred cows.
+From event-sourced to double-entry. Never any inherited assumptions.
 
 ## Architecture
 
