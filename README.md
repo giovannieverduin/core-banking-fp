@@ -54,4 +54,4 @@ npm run dev
 
 ## Author
 
-Giovanni Everduin - built at 35,000 feet.
+Giovanni Everduin - built with Claude and Emirates in-flight WiFi at 35,000 feet aboard EK073.
